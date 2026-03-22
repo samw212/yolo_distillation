@@ -1,0 +1,237 @@
+# ============================================================================
+# YOLOv11 Distillation Pipeline Configuration
+# Based on DART (arXiv:2407.09174) and Auto-Labeling (arXiv:2506.02359)
+# ============================================================================
+
+# Target object classes for detection
+classes:
+  - "safety helmet"
+  - "fire"
+  - "smoke"
+  - "human"
+  - "ladder"
+  - "working platform"
+
+# Output directories
+paths:
+  output_dir: "output"
+  data_dir: "output/data"
+  labels_dir: "output/labels"
+  review_dir: "output/review"
+  export_dir: "output/export"
+  training_dir: "output/training"
+  eval_dir: "output/evaluation"
+
+# ============================================================================
+# Stage 1: Data Acquisition (Roboflow)
+# ============================================================================
+data_acquisition:
+  # Roboflow dataset configuration
+  # API key is read from ROBOFLOW_API_KEY environment variable
+  workspace: "your-workspace"        # Override via CLI: --workspace
+  project: "your-project"            # Override via CLI: --project
+  version: 1                         # Override via CLI: --version
+  format: "yolov8"                   # Download format (raw images)
+  # Optional: limit number of images for testing
+  max_images: null                   # null = all images
+
+# ============================================================================
+# Stage 2: Auto-Labeling (Grounding DINO)
+# ============================================================================
+auto_labeling:
+  # Model configuration
+  model_id: "IDEA-Research/grounding-dino-base"
+  device: "auto"  # "auto", "cuda", "cpu"
+
+  # Detection thresholds (per DART methodology)
+  box_threshold: 0.30        # Minimum confidence for bounding box
+  text_threshold: 0.25       # Minimum confidence for text matching
+
+  # NMS (Non-Maximum Suppression)
+  nms_threshold: 0.45        # IoU threshold for NMS
+
+  # Per-class prompt engineering
+  # More specific prompts improve Grounding DINO accuracy
+  class_prompts:
+    "safety helmet": "safety helmet . hard hat . construction helmet"
+    "fire": "fire . flames . burning"
+    "smoke": "smoke . fumes . haze"
+    "human": "person . human . worker . man . woman"
+    "ladder": "ladder . step ladder . extension ladder"
+    "working platform": "working platform . scaffolding . elevated platform . scaffold"
+
+  # Batch processing
+  batch_size: 8
+
+  # Minimum/maximum box size as fraction of image area
+  min_box_area_ratio: 0.0005   # Filter tiny spurious detections
+  max_box_area_ratio: 0.95     # Filter near-full-image boxes
+
+# ============================================================================
+# Stage 3: VLM Review (Qwen2.5-VL) - Optional
+# ============================================================================
+vlm_review:
+  enabled: true
+  model_id: "Qwen/Qwen2.5-VL-7B-Instruct"
+  device: "auto"
+
+  # Review strategy: "patch" crops each detection, "full" sends full image with annotations
+  strategy: "patch"
+
+  # Confidence threshold - labels below this from Grounding DINO get VLM review
+  # Labels above this are auto-approved
+  auto_approve_threshold: 0.65
+
+  # VLM acceptance threshold - fraction of VLM "yes" responses needed to approve
+  acceptance_threshold: 0.5
+
+  # Batch size for VLM inference
+  batch_size: 4
+
+  # Prompt templates for VLM review
+  patch_review_prompt: |
+    Look at this cropped image from an object detection system.
+    The detection system labeled this as: "{class_name}"
+
+    Is this label correct? Does this image show a {class_name}?
+    Answer with ONLY "yes" or "no", followed by a brief reason.
+
+  full_image_review_prompt: |
+    This image has been annotated with bounding boxes for object detection.
+    Review each labeled detection and determine if:
+    1. The class label is correct
+    2. The bounding box reasonably covers the object
+
+    For each detection, respond with "ACCEPT" or "REJECT" and a brief reason.
+
+    Detections to review:
+    {detections}
+
+  # Padding ratio when cropping patches (adds context around the box)
+  patch_padding_ratio: 0.15
+
+  # Maximum number of retries for VLM inference failures
+  max_retries: 3
+
+# ============================================================================
+# Stage 4: Human Labeling Export (CVAT)
+# ============================================================================
+human_labeling:
+  # Export format for images that failed VLM review
+  format: "cvat"
+
+  # CVAT XML export settings
+  cvat:
+    task_name: "yolo_distillation_review"
+    # Include the auto-generated labels as pre-annotations
+    include_pre_annotations: true
+    # Include VLM rejection reasons as comments
+    include_rejection_reasons: true
+
+  # After human labeling, import corrected labels from this directory
+  import_dir: "output/human_corrected"
+  import_format: "cvat_xml"  # "cvat_xml", "yolo_txt", "coco_json"
+
+# ============================================================================
+# Stage 5: YOLOv11 Training
+# ============================================================================
+training:
+  # Model selection
+  model: "yolo11s.pt"  # yolo11n.pt, yolo11s.pt, yolo11m.pt, yolo11l.pt, yolo11x.pt
+
+  # Training hyperparameters
+  epochs: 100
+  batch_size: 16
+  imgsz: 640
+  patience: 20           # Early stopping patience
+  lr0: 0.01              # Initial learning rate
+  lrf: 0.01              # Final learning rate factor
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_momentum: 0.8
+
+  # Data augmentation (Ultralytics defaults with adjustments)
+  augmentation:
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    degrees: 0.0
+    translate: 0.1
+    scale: 0.5
+    shear: 0.0
+    perspective: 0.0
+    flipud: 0.0
+    fliplr: 0.5
+    mosaic: 1.0
+    mixup: 0.1
+    copy_paste: 0.1
+
+  # Dataset split ratios
+  split:
+    train: 0.8
+    val: 0.15
+    test: 0.05
+
+  # Training device
+  device: "auto"   # "auto", "cuda", "cpu", "0", "0,1" for multi-GPU
+  workers: 8
+
+  # Resume training from checkpoint
+  resume: false
+
+# ============================================================================
+# Stage 6: Evaluation
+# ============================================================================
+evaluation:
+  # Confidence threshold for predictions during evaluation
+  conf_threshold: 0.25
+  iou_threshold: 0.5
+
+  # Metrics to compute
+  metrics:
+    - "mAP50"
+    - "mAP50-95"
+    - "precision"
+    - "recall"
+    - "f1"
+
+  # Visualization outputs
+  visualizations:
+    confusion_matrix: true
+    pr_curve: true
+    f1_curve: true
+    precision_confidence_curve: true
+    recall_confidence_curve: true
+    prediction_samples: true
+    label_distribution: true
+    box_size_distribution: true
+
+  # Number of sample predictions to visualize
+  num_samples: 50
+
+  # Per-class analysis
+  per_class_analysis: true
+
+  # Compare with ground truth if available
+  compare_with_gt: true
+
+  # Export evaluation report
+  report_format: "html"  # "html", "json", "both"
+
+# ============================================================================
+# Pipeline Settings
+# ============================================================================
+pipeline:
+  # Random seed for reproducibility
+  seed: 42
+
+  # Logging
+  log_level: "INFO"  # "DEBUG", "INFO", "WARNING", "ERROR"
+  log_file: "output/pipeline.log"
+
+  # Skip stages that have already completed (resume support)
+  skip_completed: true
+
+  # Stage completion markers stored in this directory
+  markers_dir: "output/.markers"

@@ -1,0 +1,46 @@
+# YOLOv11 Distillation Pipeline Dependencies
+# Based on DART (arXiv:2407.09174) and Auto-Labeling (arXiv:2506.02359)
+
+# Core ML frameworks
+torch>=2.1.0
+torchvision>=0.16.0
+
+# YOLOv11 (Ultralytics)
+ultralytics>=8.3.0
+
+# Grounding DINO for auto-labeling
+transformers>=4.40.0
+autodistill>=0.1.0
+autodistill-grounding-dino>=0.1.0
+
+# Qwen VLM for pseudo-label review
+qwen-vl-utils>=0.0.8
+accelerate>=0.30.0
+
+# Roboflow dataset management
+roboflow>=1.1.0
+
+# Image processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Data handling
+numpy>=1.24.0
+pandas>=2.0.0
+pyyaml>=6.0.0
+
+# Visualization and evaluation
+matplotlib>=3.7.0
+seaborn>=0.12.0
+scikit-learn>=1.3.0
+
+# CVAT export support
+lxml>=4.9.0
+
+# CLI
+click>=8.1.0
+rich>=13.0.0
+tqdm>=4.65.0
+
+# Utilities
+Jinja2>=3.1.0
